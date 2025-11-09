@@ -21,7 +21,7 @@
 </head>
 <body>
   <h1>AI Image Generator</h1>
-  <p class="small">Backend: <code id="backend"></code></p>
+  <p class="small">Backend: <code id="backend">https://server-j-v1x1.onrender.com</code></p>
 
   <label>Prompt</label>
   <textarea id="prompt">A photo-realistic image of a peaceful South Indian (Telugu) village at sunset: mud houses, palm trees, farmers, cows, warm golden light.</textarea>
@@ -38,11 +38,9 @@
   <div id="debug" style="margin-top:12px"></div>
 
   <script>
-    // If you serve frontend from same origin as backend (Render backend), leave BACKEND empty.
-    // If hosting frontend separately, set the full backend URL like 'https://charan4.onrender.com'
-    const BACKEND = 'https://server-j-v1x1.onrender.com'; // set to backend origin if needed
+    const BACKEND = 'https://server-j-v1x1.onrender.com';
 
-    document.getElementById('backend').textContent = BACKEND || location.origin;
+    document.getElementById('backend').textContent = BACKEND;
 
     const promptEl = document.getElementById('prompt');
     const widthEl = document.getElementById('width');
@@ -83,7 +81,7 @@
         return;
       }
 
-      const resp = await postJson((BACKEND || '') + '/api/generate-image', { prompt, width, height, samples });
+      const resp = await postJson(BACKEND + '/api/generate-image', { prompt, width, height, samples });
       if (!resp.ok) {
         setStatus('Error: ' + (resp.json?.error || resp.text || resp.status));
         setDebug(resp.json || resp.text);
@@ -93,8 +91,7 @@
 
       const data = resp.json;
       if (data.imageUrl) {
-        // imageUrl may be a relative path like /out/xxx.png
-        const src = (BACKEND ? BACKEND : location.origin) + data.imageUrl;
+        const src = BACKEND + data.imageUrl;
         const img = document.createElement('img');
         img.src = src;
         img.alt = 'Generated image';
@@ -109,10 +106,9 @@
       genBtn.disabled = false;
     });
 
-    // optional health-check
     (async function health() {
       try {
-        const h = await fetch((BACKEND || '') + '/health');
+        const h = await fetch(BACKEND + '/health');
         if (h.ok) setStatus('Backend online');
       } catch (e) {
         setStatus('Backend offline or not reachable');
@@ -121,3 +117,4 @@
   </script>
 </body>
 </html>
+
