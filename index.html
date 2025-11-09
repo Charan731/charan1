@@ -2,46 +2,35 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>AI Video Generator — Frontend</title>
+  <title>AI Image Generator</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body{font-family:Inter,Arial,Helvetica,sans-serif;max-width:900px;margin:24px auto;padding:18px}
-    h1{margin:0 0 12px}
-    label{display:block;margin-top:12px;font-weight:600}
-    textarea{width:100%;min-height:110px;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px}
-    .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+    body{font-family:Arial,Helvetica,sans-serif;max-width:900px;margin:28px auto;padding:16px}
+    h1{margin:0 0 10px}
+    textarea{width:100%;min-height:120px;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px}
+    .controls{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
     input[type=number]{width:100px;padding:8px;border-radius:6px;border:1px solid #ddd}
     button{padding:10px 14px;border:none;background:#0b6cff;color:#fff;border-radius:8px;cursor:pointer}
     button[disabled]{opacity:.6;cursor:default}
     .status{margin-top:12px;font-weight:600}
     .result{margin-top:12px}
-    video{max-width:100%;border:1px solid #eee;border-radius:8px}
-    .small{font-size:13px;color:#666}
+    img{max-width:100%;border:1px solid #eee;border-radius:8px}
     pre{background:#f7f7f7;padding:10px;border-radius:6px;overflow:auto}
+    .small{font-size:13px;color:#666}
   </style>
 </head>
 <body>
-  <h1>AI Video Generator</h1>
-  <p class="small">Backend: <code id="backendUrl"></code></p>
+  <h1>AI Image Generator</h1>
+  <p class="small">Backend: <code id="backend"></code></p>
 
   <label>Prompt</label>
-  <textarea id="prompt">A cinematic 10-second video of a South Indian (Telugu) village at sunset, palm trees, mud houses, farmers, cows, warm golden light, photorealistic.</textarea>
+  <textarea id="prompt">A photo-realistic image of a peaceful South Indian (Telugu) village at sunset: mud houses, palm trees, farmers, cows, warm golden light.</textarea>
 
   <div class="controls">
-    <label>Duration (s)
-      <input id="duration" type="number" value="10" min="3" max="30" />
-    </label>
-
-    <label>Width
-      <input id="width" type="number" value="1920" />
-    </label>
-
-    <label>Height
-      <input id="height" type="number" value="1080" />
-    </label>
-
-    <button id="generate">Generate Video</button>
-    <button id="cancel" style="background:#e74c3c;display:none">Cancel</button>
+    <label>Width <input id="width" type="number" value="512" min="64" /></label>
+    <label>Height <input id="height" type="number" value="512" min="64" /></label>
+    <label>Samples <input id="samples" type="number" value="1" min="1" max="4" /></label>
+    <button id="gen">Generate Image</button>
   </div>
 
   <div id="status" class="status">Idle</div>
@@ -49,29 +38,23 @@
   <div id="debug" style="margin-top:12px"></div>
 
   <script>
-    // <- Configure backend URL here (use your live backend)
-    const BACKEND = 'https://charan4.onrender.com'; // <-- already set to your Render backend
+    // If you serve frontend from same origin as backend (Render backend), leave BACKEND empty.
+    // If hosting frontend separately, set the full backend URL like 'https://charan4.onrender.com'
+    const BACKEND = 'https://server-j-v1x1.onrender.com'; // set to backend origin if needed
 
-    document.getElementById('backendUrl').textContent = BACKEND;
+    document.getElementById('backend').textContent = BACKEND || location.origin;
 
     const promptEl = document.getElementById('prompt');
-    const durationEl = document.getElementById('duration');
     const widthEl = document.getElementById('width');
     const heightEl = document.getElementById('height');
-    const genBtn = document.getElementById('generate');
-    const cancelBtn = document.getElementById('cancel');
+    const samplesEl = document.getElementById('samples');
+    const genBtn = document.getElementById('gen');
     const statusEl = document.getElementById('status');
     const resultEl = document.getElementById('result');
     const debugEl = document.getElementById('debug');
 
-    let currentJobId = null;
-    let polling = false;
-    let pollTimer = null;
-    let abort = false;
-
-    function safeJson(text) {
-      try { return JSON.parse(text); } catch(e){ return null; }
-    }
+    function setStatus(msg) { statusEl.textContent = msg; }
+    function setDebug(obj) { debugEl.innerHTML = '<pre>' + JSON.stringify(obj, null, 2) + '</pre>'; }
 
     async function postJson(url, body) {
       const resp = await fetch(url, {
@@ -80,161 +63,59 @@
         body: JSON.stringify(body)
       });
       const text = await resp.text();
-      const json = safeJson(text);
-      return { ok: resp.ok, status: resp.status, json, text };
+      try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; } catch(e) { return { ok: resp.ok, status: resp.status, text }; }
     }
-
-    async function getJson(url) {
-      const resp = await fetch(url);
-      const text = await resp.text();
-      const json = safeJson(text);
-      return { ok: resp.ok, status: resp.status, json, text };
-    }
-
-    function setStatus(msg) { statusEl.textContent = msg; }
-    function setDebug(obj) { debugEl.innerHTML = '<pre>' + JSON.stringify(obj, null, 2) + '</pre>'; }
 
     genBtn.addEventListener('click', async () => {
-      abort = false;
+      setStatus('Requesting image...');
       resultEl.innerHTML = '';
-      setDebug('');
-      setStatus('Creating job...');
+      debugEl.innerHTML = '';
       genBtn.disabled = true;
-      cancelBtn.style.display = 'inline-block';
 
       const prompt = promptEl.value.trim();
-      const duration = parseInt(durationEl.value || '10', 10);
-      const width = parseInt(widthEl.value || '1920', 10);
-      const height = parseInt(heightEl.value || '1080', 10);
+      const width = parseInt(widthEl.value||'512', 10);
+      const height = parseInt(heightEl.value||'512', 10);
+      const samples = parseInt(samplesEl.value||'1', 10);
 
       if (!prompt || prompt.length < 3) {
         setStatus('Please enter a longer prompt.');
         genBtn.disabled = false;
-        cancelBtn.style.display = 'none';
         return;
       }
 
-      // create job
-      const create = await postJson(BACKEND + '/api/generate-video', { prompt, duration, width, height });
-      if (!create.ok) {
-        setStatus('Error creating job: ' + (create.json?.error || create.text || create.status));
-        setDebug(create.json || create.text);
+      const resp = await postJson((BACKEND || '') + '/api/generate-image', { prompt, width, height, samples });
+      if (!resp.ok) {
+        setStatus('Error: ' + (resp.json?.error || resp.text || resp.status));
+        setDebug(resp.json || resp.text);
         genBtn.disabled = false;
-        cancelBtn.style.display = 'none';
         return;
       }
 
-      const jobId = create.json?.jobId;
-      if (!jobId) {
-        // maybe provider returned immediate videoUrl (rare)
-        if (create.json?.videoUrl) {
-          showResult(create.json.videoUrl);
-          setStatus('Video ready');
-        } else {
-          setStatus('Unexpected create response');
-          setDebug(create.json || create.text);
-        }
-        genBtn.disabled = false;
-        cancelBtn.style.display = 'none';
-        return;
+      const data = resp.json;
+      if (data.imageUrl) {
+        // imageUrl may be a relative path like /out/xxx.png
+        const src = (BACKEND ? BACKEND : location.origin) + data.imageUrl;
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = 'Generated image';
+        resultEl.innerHTML = '';
+        resultEl.appendChild(img);
+        setStatus('Image ready');
+        setDebug(data.providerResponse);
+      } else {
+        setStatus('No image returned');
+        setDebug(data);
       }
-
-      currentJobId = jobId;
-      setStatus(`Job created: ${jobId} — polling status...`);
-      polling = true;
-      pollJob(jobId);
-    });
-
-    cancelBtn.addEventListener('click', () => {
-      abort = true;
-      polling = false;
-      if (pollTimer) clearTimeout(pollTimer);
-      setStatus('Cancelled by user.');
       genBtn.disabled = false;
-      cancelBtn.style.display = 'none';
     });
 
-    async function pollJob(jobId) {
-      try {
-        if (abort) {
-          setStatus('Polling cancelled.');
-          genBtn.disabled = false;
-          cancelBtn.style.display = 'none';
-          return;
-        }
-        const res = await getJson(BACKEND + '/api/status/' + jobId);
-
-        if (!res.ok) {
-          setStatus('Error checking status: ' + (res.json?.error || res.text || res.status));
-          setDebug(res.json || res.text);
-          genBtn.disabled = false;
-          cancelBtn.style.display = 'none';
-          return;
-        }
-
-        const data = res.json;
-        setStatus(`Job ${jobId} — status: ${data.status}`);
-
-        if (data.status === 'succeeded' && data.resultUrl) {
-          // show video
-          showResult(data.resultUrl);
-          setDebug(data);
-          genBtn.disabled = false;
-          cancelBtn.style.display = 'none';
-          polling = false;
-          currentJobId = null;
-          return;
-        }
-        if (data.status === 'failed') {
-          setStatus('Job failed — see debug.');
-          setDebug(data);
-          genBtn.disabled = false;
-          cancelBtn.style.display = 'none';
-          polling = false;
-          currentJobId = null;
-          return;
-        }
-
-        // still processing -> poll again
-        pollTimer = setTimeout(() => pollJob(jobId), 3000);
-      } catch (err) {
-        setStatus('Polling error: ' + err.message);
-        setDebug({ message: err.message });
-        genBtn.disabled = false;
-        cancelBtn.style.display = 'none';
-      }
-    }
-
-    function showResult(url) {
-      resultEl.innerHTML = '';
-      // If url looks like a remote URL (http/https) embed it; if it's a /out/ path, prefix with backend origin.
-      let videoSrc = url;
-      if (url && url.startsWith('/out/')) videoSrc = BACKEND + url;
-      // Insert video tag
-      const v = document.createElement('video');
-      v.controls = true;
-      v.autoplay = false;
-      v.src = videoSrc;
-      resultEl.appendChild(v);
-      // download link
-      const a = document.createElement('p');
-      a.innerHTML = `<a href="${videoSrc}" target="_blank" rel="noopener">Open video in new tab / download</a>`;
-      resultEl.appendChild(a);
-      setStatus('Video ready — play below or open in new tab');
-    }
-
-    // optional: quick health check on load
+    // optional health-check
     (async function health() {
       try {
-        const h = await getJson(BACKEND + '/health');
-        if (!h.ok) {
-          document.getElementById('backendUrl').textContent += ' (backend health: ERROR)';
-          console.warn('Backend health check failed', h);
-        } else {
-          document.getElementById('backendUrl').textContent += ' (backend online)';
-        }
-      } catch(e) {
-        document.getElementById('backendUrl').textContent += ' (health check failed)';
+        const h = await fetch((BACKEND || '') + '/health');
+        if (h.ok) setStatus('Backend online');
+      } catch (e) {
+        setStatus('Backend offline or not reachable');
       }
     })();
   </script>
